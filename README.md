@@ -10,6 +10,7 @@ Schemathesis の検出能力を検証するために設計された Go 製 REST 
 | [Go](https://go.dev/) | 1.21+ | API サーバーのビルド・実行 |
 | [Task](https://taskfile.dev/) | 3.x | タスクランナー |
 | [Python](https://www.python.org/) | 3.9+ | Schemathesis の実行 |
+| [Allure Report](https://allurereport.org/) | 3.x | Schemathesis レポートの HTML 化 |
 
 > [!TIP]
 > Task のインストール: `brew install go-task`
@@ -92,9 +93,64 @@ schemathesis run openapi.yaml --url http://localhost:8080 --stateful=links
 | コマンド | 説明 |
 |---|---|
 | `task test:all` | 上記3つ（test → test:auth → test:stateful）を順番に実行 |
+| `task test:coverage` | Schemathesis の実行結果を Allure HTML とカバレッジ HTML で可視化 |
+| `task report:serve` | 生成済みレポートを HTTP サーバーで表示 |
 | `task lint` | `go vet` による静的解析 |
 | `task fmt` | `gofmt` によるコード整形 |
 | `task clean` | `.schemathesis`, `.hypothesis` キャッシュを削除 |
+
+### `task test:coverage` — Allure HTML / カバレッジ可視化
+
+Schemathesis の Allure / HAR / NDJSON / JUnit レポートを出力し、Allure CLI で静的 HTML を生成します。あわせて、`openapi.yaml` の各 operation が実際に実行されたかを確認するカバレッジ HTML も生成します。
+
+```
+task test:coverage
+```
+
+Allure CLI が未インストールの場合は、npm で導入できます。
+
+```
+npm install -g allure
+```
+
+または macOS では Homebrew でも導入できます。
+
+```
+brew install allure
+```
+
+Allure は Java 上で動作するため、Java がない環境では先に JDK を導入してください。
+
+```
+brew install openjdk
+```
+
+生成される主なファイル:
+
+| ファイル | 説明 |
+|---|---|
+| `schemathesis-report/allure-html/index.html` | Allure の静的 HTML レポート |
+| `schemathesis-report/allure-results/` | Allure HTML の元になる実行結果 |
+| `schemathesis-report/coverage.html` | operation ごとの実行有無、リクエスト数、観測ステータス、OpenAPI 上の制約を一覧表示 |
+| `schemathesis-report/schemathesis.har` | 実際に送受信された HTTP リクエスト / レスポンス |
+| `schemathesis-report/schemathesis.ndjson` | Schemathesis の実行イベントログ |
+| `schemathesis-report/junit.xml` | CI 連携用の JUnit レポート |
+
+Allure の HTML は内部で JSON / JS / CSS を読み込むため、`file://.../index.html` を直接開くとブラウザの制限で `Failed to fetch` になることがあります。生成後は HTTP サーバー経由で表示してください。
+
+```
+task report:serve
+```
+
+表示先:
+
+| URL | 説明 |
+|---|---|
+| `http://localhost:8082/allure-html/` | Allure レポート |
+| `http://localhost:8082/coverage.html` | API operation カバレッジ |
+
+> [!NOTE]
+> これは Go のソースコードカバレッジではなく、`openapi.yaml` に定義された API operation が Schemathesis によってどの程度実行されたかを示すカバレッジです。
 
 ## プロジェクト構成
 

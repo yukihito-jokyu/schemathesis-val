@@ -29,17 +29,72 @@ task test
 
 ## タスク一覧
 
+### `task test` — 基本テスト
+
+認証不要の全エンドポイントに対して、スキーマ適合性・境界値・バリデーションをテストします。
+
+```
+schemathesis run openapi.yaml --url http://localhost:8080
+```
+
+**対象エンドポイント例:**
+- `GET /health` — 正常レスポンスの型チェック
+- `GET /users?limit=&role=invalid` — クエリパラメータの境界値・列挙型チェック
+- `POST /users` — リクエストボディの必須フィールド・型チェック
+- `GET /bugs/*` — 意図的バグの検出（スキーマ違反・500エラー・未定義ステータスコード）
+
+**検出できるもの:** スキーマ逸脱、境界値違反、不正ステータスコード、サーバーエラー
+
+---
+
+### `task test:auth` — 認証付きテスト
+
+`Authorization: Bearer test-token` ヘッダーを付与してテストします。  
+`task test` の内容に加え、認証が必要なエンドポイントにもアクセスできるようになります。
+
+```
+schemathesis run openapi.yaml --url http://localhost:8080 \
+  -H "Authorization: Bearer test-token"
+```
+
+**`task test` との違い:**
+- `GET /me` — 認証必須エンドポイントが 401 ではなく 200 を返すことを検証できる
+- 認証済み状態での Users/Items/Orders 操作も検証対象に含まれる
+
+**検出できるもの:** 上記に加え、認証フローのスキーマ適合性
+
+---
+
+### `task test:stateful` — ステートフルテスト
+
+OpenAPI の `links` 定義を使い、複数エンドポイントを連鎖させてテストします。  
+単発リクエストではなく「操作の流れ」全体を検証します。
+
+```
+schemathesis run openapi.yaml --url http://localhost:8080 --stateful=links
+```
+
+**実行されるシナリオ例:**
+1. `POST /users` でユーザーを作成 → レスポンスの `id` を取得
+2. `GET /users/{userId}` に作成した `id` を使ってアクセス
+3. `PUT /users/{userId}` で更新 → `DELETE /users/{userId}` で削除
+
+**`task test` との違い:**
+- `task test` は各エンドポイントを**独立して**テストする（ランダム値を使用）
+- `task test:stateful` は**前のレスポンスの値を次のリクエストに引き継ぐ**（現実的なシナリオを再現）
+
+**検出できるもの:** 状態遷移の不整合、リソースの生成→参照→削除フローの破綻
+
+---
+
+### その他のタスク
+
 | コマンド | 説明 |
 |---|---|
-| `task run` | API サーバーを `localhost:8080` で起動 |
-| `task setup` | Python 仮想環境を作成し schemathesis をインストール |
-| `task test` | Schemathesis の基本テストを実行 |
-| `task test:auth` | `Authorization: Bearer test-token` ヘッダー付きでテスト |
-| `task test:stateful` | API Links を使ったステートフルテストを実行 |
-| `task test:all` | 全テストモードを順番に実行 |
+| `task test:all` | 上記3つ（test → test:auth → test:stateful）を順番に実行 |
 | `task lint` | `go vet` による静的解析 |
 | `task fmt` | `gofmt` によるコード整形 |
-| `task clean` | キャッシュ・一時ファイルを削除 |
+| `task clean` | `.schemathesis`, `.hypothesis` キャッシュを削除 |
 
 ## プロジェクト構成
 

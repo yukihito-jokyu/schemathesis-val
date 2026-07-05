@@ -1,0 +1,75 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  SCHEMATHESIS:
+    sh: |
+      if [ -f .venv/bin/schemathesis ]; then
+        echo .venv/bin/schemathesis
+      else
+        echo schemathesis
+      fi
+  API_URL: http://localhost:8080
+  AUTH_TOKEN: test-token
+
+tasks:
+  default:
+    desc: 利用可能なタスク一覧を表示
+    cmds:
+      - task --list
+
+  run:
+    desc: APIサーバーを起動
+    cmds:
+      - go run ./cmd/api
+
+  setup:
+    desc: Python仮想環境を作成し schemathesis をインストール
+    cmds:
+      - python3 -m venv .venv
+      - .venv/bin/pip install schemathesis
+    status:
+      - test -f .venv/bin/schemathesis
+
+  test:
+    desc: Schemathesis の基本テストを実行
+    deps: [setup]
+    cmds:
+      - "{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}}"
+
+  test:auth:
+    desc: 認証ヘッダー付きで Schemathesis テストを実行
+    deps: [setup]
+    cmds:
+      - '{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}} -H "Authorization: Bearer {{.AUTH_TOKEN}}"'
+
+  test:stateful:
+    desc: ステートフルテスト（API Links）を実行
+    deps: [setup]
+    cmds:
+      - "{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}} --stateful=links"
+
+  test:all:
+    desc: 全テストモードを順番に実行（基本 → 認証 → ステートフル）
+    deps: [setup]
+    cmds:
+      - task: test
+      - task: test:auth
+      - task: test:stateful
+
+  lint:
+    desc: Go コードの静的解析
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Go コードのフォーマット
+    cmds:
+      - gofmt -w .
+
+  clean:
+    desc: ビルド成果物とキャッシュを削除
+    cmds:
+      - rm -rf .schemathesis .hypothesis
+      - go clean

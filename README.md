@@ -1,60 +1,127 @@
-# Schemathesis Go Verification API
+# Schemathesis 検証用 Go API
 
-This API is designed to verify the capability of Schemathesis in detecting schema deviations, boundary value validations, authentication verification, stateful transitions, and intentional bugs.
+Schemathesis の検出能力を検証するために設計された Go 製 REST API です。  
+スキーマ逸脱、境界値バリデーション、認証、ステートフル遷移、意図的バグの検出をテストできます。
 
-## Start API
+## 前提条件
 
-```bash
-go run ./cmd/api
-```
+| ツール | バージョン | 用途 |
+|---|---|---|
+| [Go](https://go.dev/) | 1.21+ | API サーバーのビルド・実行 |
+| [Task](https://taskfile.dev/) | 3.x | タスクランナー |
+| [Python](https://www.python.org/) | 3.9+ | Schemathesis の実行 |
 
-Alternatively:
-```bash
-make run
-```
+> [!TIP]
+> Task のインストール: `brew install go-task`
 
-## Run Schemathesis
-
-```bash
-schemathesis run openapi.yaml --url http://localhost:8080
-```
-
-Alternatively:
-```bash
-make test-schemathesis
-```
-
-## Run with auth header
+## クイックスタート
 
 ```bash
-schemathesis run openapi.yaml \
-  --url http://localhost:8080 \
-  -H "Authorization: Bearer test-token"
+# 1. 依存関係のセットアップ（初回のみ）
+task setup
+
+# 2. API サーバーを起動
+task run
+
+# 3. 別ターミナルで Schemathesis テストを実行
+task test
 ```
 
-Alternatively:
-```bash
-make test-schemathesis-auth
+## タスク一覧
+
+| コマンド | 説明 |
+|---|---|
+| `task run` | API サーバーを `localhost:8080` で起動 |
+| `task setup` | Python 仮想環境を作成し schemathesis をインストール |
+| `task test` | Schemathesis の基本テストを実行 |
+| `task test:auth` | `Authorization: Bearer test-token` ヘッダー付きでテスト |
+| `task test:stateful` | API Links を使ったステートフルテストを実行 |
+| `task test:all` | 全テストモードを順番に実行 |
+| `task lint` | `go vet` による静的解析 |
+| `task fmt` | `gofmt` によるコード整形 |
+| `task clean` | キャッシュ・一時ファイルを削除 |
+
+## プロジェクト構成
+
+```
+.
+├── Taskfile.yml              # タスクランナー定義
+├── openapi.yaml              # OpenAPI 3.0.3 仕様書
+├── cmd/
+│   └── api/
+│       └── main.go           # エントリーポイント（chi router）
+└── internal/
+    ├── handler/
+    │   ├── health_handler.go  # GET /health
+    │   ├── users_handler.go   # Users CRUD + GET /me
+    │   ├── items_handler.go   # Items CRUD
+    │   ├── orders_handler.go  # Orders Create/Get
+    │   └── bugs_handler.go    # 意図的バグ 4 種
+    ├── middleware/
+    │   ├── auth.go            # Bearer トークン認証
+    │   └── recover.go         # panic → JSON 500 レスポンス
+    ├── model/                 # リクエスト/レスポンス構造体
+    ├── response/
+    │   └── json.go            # JSON レスポンスヘルパー
+    └── store/
+        └── memory.go          # スレッドセーフなインメモリストア
 ```
 
-## Run stateful testing
+## API エンドポイント
 
-```bash
-schemathesis run openapi.yaml \
-  --url http://localhost:8080 \
-  --stateful=links
-```
+### 正常エンドポイント
 
-Alternatively:
-```bash
-make test-schemathesis-stateful
-```
+| メソッド | パス | 説明 |
+|---|---|---|
+| `GET` | `/health` | ヘルスチェック |
+| `GET` | `/users` | ユーザー一覧（`limit`, `role` でフィルタ可能） |
+| `POST` | `/users` | ユーザー作成 |
+| `GET` | `/users/{userId}` | ユーザー取得 |
+| `PUT` | `/users/{userId}` | ユーザー更新 |
+| `DELETE` | `/users/{userId}` | ユーザー削除 |
+| `GET` | `/me` | 認証済みユーザー情報（Bearer 必須） |
+| `GET` | `/items` | アイテム一覧（`category`, `minPrice`, `maxPrice` でフィルタ可能） |
+| `POST` | `/items` | アイテム作成 |
+| `GET` | `/items/{itemId}` | アイテム取得 |
+| `POST` | `/orders` | 注文作成 |
+| `GET` | `/orders/{orderId}` | 注文取得 |
 
-## Expected findings
+### 意図的バグエンドポイント (`/bugs/*`)
 
-Schemathesis should detect failures from the following intentional bugs:
+Schemathesis がこれらの不具合を検出できることを確認するためのエンドポイントです。
 
-* `GET /bugs/schema-mismatch`: Returns invalid types and missing fields.
-* `GET /bugs/status-mismatch`: Returns a 418 teapot code which is not documented in the schema.
-* `POST /bugs/panic-on-zero`: Panics when a zero value is sent, returning 500.
-* `GET /bugs/invalid-email`: Returns a user with a malformed email format (`not-an-email`).
+| メソッド | パス | 検出対象 |
+|---|---|---|
+| `GET` | `/bugs/schema-mismatch` | 型の不一致・必須フィールドの欠落 |
+| `GET` | `/bugs/status-mismatch` | 未定義のステータスコード（418 Teapot） |
+| `POST` | `/bugs/panic-on-zero` | サーバーエラー（value=0 で panic → 500） |
+| `GET` | `/bugs/invalid-email` | 不正な email フォーマット |
+
+## 検証結果の見方
+
+Schemathesis 実行後、以下のように結果が分類されます:
+
+| 結果カテゴリ | 期待される検出元 |
+|---|---|
+| **Server error** | `/bugs/panic-on-zero` |
+| **Response violates schema** | `/bugs/schema-mismatch`, `/bugs/invalid-email` |
+| **Undocumented HTTP status code** | `/bugs/status-mismatch`, `/bugs/panic-on-zero` |
+
+> [!IMPORTANT]
+> 正常エンドポイントに対する失敗は **0 件** であるべきです。  
+> すべての失敗が `/bugs/*` 配下に起因していれば、API は正しく実装されています。
+
+## 検証項目
+
+このAPIは以下の Schemathesis 機能を検証します:
+
+- **スキーマ適合性**: レスポンスが OpenAPI 仕様に準拠しているか
+- **境界値テスト**: `minimum`, `maximum`, `minLength`, `maxLength` の境界
+- **列挙型バリデーション**: `enum` 制約の遵守
+- **認証**: Bearer トークンによる 401/403 ハンドリング
+- **ステートフルテスト**: API Links (`POST /users → GET /users/{userId}`) による遷移
+- **不正入力の拒否**: `additionalProperties: false`, null 値, 未知のクエリパラメータ
+
+## ライセンス
+
+MIT

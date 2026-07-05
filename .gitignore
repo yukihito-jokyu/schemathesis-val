@@ -1,0 +1,7 @@
+.venv/
+.schemathesis/
+.hypothesis/
+.openapi-preview.html
+schemathesis-report/
+__pycache__/
+*.pyc

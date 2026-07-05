@@ -1,0 +1,150 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  SCHEMATHESIS:
+    sh: |
+      if [ -f .venv/bin/schemathesis ]; then
+        echo .venv/bin/schemathesis
+      else
+        echo schemathesis
+      fi
+  API_URL: http://localhost:8080
+  AUTH_TOKEN: test-token
+  SCHEMATHESIS_REPORT_DIR: schemathesis-report
+  ALLURE_RESULTS_DIR: schemathesis-report/allure-results
+  ALLURE_HTML_DIR: schemathesis-report/allure-html
+  REPORT_PORT: 8082
+
+tasks:
+  default:
+    desc: 利用可能なタスク一覧を表示
+    cmds:
+      - task --list
+
+  run:
+    desc: APIサーバーを起動
+    cmds:
+      - go run ./cmd/api
+
+  setup:
+    desc: Python仮想環境を作成し schemathesis と Allure 連携をインストール
+    cmds:
+      - python3 -m venv .venv
+      - .venv/bin/pip install schemathesis allure-python-commons
+    status:
+      - test -f .venv/bin/schemathesis
+      - .venv/bin/python -c "import allure_commons"
+
+  test:
+    desc: Schemathesis の基本テストを実行
+    deps: [setup]
+    cmds:
+      - "{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}}"
+
+  test:auth:
+    desc: 認証ヘッダー付きで Schemathesis テストを実行
+    deps: [setup]
+    cmds:
+      - '{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}} -H "Authorization: Bearer {{.AUTH_TOKEN}}"'
+
+  test:stateful:
+    desc: ステートフルテスト（API Links）を実行
+    deps: [setup]
+    cmds:
+      - "{{.SCHEMATHESIS}} run openapi.yaml --url {{.API_URL}} --stateful=links"
+
+  test:all:
+    desc: 全テストモードを順番に実行（基本 → 認証 → ステートフル）
+    deps: [setup]
+    cmds:
+      - task: test
+      - task: test:auth
+      - task: test:stateful
+
+  test:coverage:
+    desc: Schemathesis の実行結果を Allure HTML とカバレッジHTMLで可視化
+    deps: [setup]
+    cmds:
+      - mkdir -p {{.SCHEMATHESIS_REPORT_DIR}}
+      - allure --version
+      - cmd: >-
+          {{.SCHEMATHESIS}} run openapi.yaml
+          --url {{.API_URL}}
+          --report=allure,har,ndjson,junit
+          --report-allure-path {{.ALLURE_RESULTS_DIR}}
+          --report-har-path {{.SCHEMATHESIS_REPORT_DIR}}/schemathesis.har
+          --report-ndjson-path {{.SCHEMATHESIS_REPORT_DIR}}/schemathesis.ndjson
+          --report-junit-path {{.SCHEMATHESIS_REPORT_DIR}}/junit.xml
+          --continue-on-failure
+        ignore_error: true
+      - allure generate {{.ALLURE_RESULTS_DIR}} -o {{.ALLURE_HTML_DIR}}
+      - >-
+        .venv/bin/python tools/schemathesis_coverage_report.py
+        --schema openapi.yaml
+        --har {{.SCHEMATHESIS_REPORT_DIR}}/schemathesis.har
+        --output {{.SCHEMATHESIS_REPORT_DIR}}/coverage.html
+      - echo "Generated {{.ALLURE_HTML_DIR}}/index.html"
+      - echo "Generated {{.SCHEMATHESIS_REPORT_DIR}}/coverage.html"
+
+  report:serve:
+    desc: 生成済みレポートを HTTP サーバーで表示
+    dir: "{{.SCHEMATHESIS_REPORT_DIR}}"
+    cmds:
+      - echo "Allure  http://localhost:{{.REPORT_PORT}}/allure-html/"
+      - echo "Coverage http://localhost:{{.REPORT_PORT}}/coverage.html"
+      - python3 -m http.server {{.REPORT_PORT}}
+
+  openapi:html:generate:
+    desc: openapi.yaml を確認するための Swagger UI HTML を生成
+    cmds:
+      - |
+        cat > .openapi-preview.html <<'HTML'
+        <!doctype html>
+        <html lang="ja">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>openapi.yaml</title>
+            <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+          </head>
+          <body>
+            <div id="swagger-ui"></div>
+            <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+            <script>
+              window.addEventListener("load", () => {
+                window.ui = SwaggerUIBundle({
+                  url: "/openapi.yaml",
+                  dom_id: "#swagger-ui",
+                });
+              });
+            </script>
+          </body>
+        </html>
+        HTML
+        echo "Generated .openapi-preview.html"
+
+  openapi:html:
+    desc: openapi.yaml を Swagger UI のHTMLで確認
+    deps: [openapi:html:generate]
+    cmds:
+      - |
+        echo "Open http://localhost:8081/.openapi-preview.html"
+        python3 -m http.server 8081
+
+  lint:
+    desc: Go コードの静的解析
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Go コードのフォーマット
+    cmds:
+      - gofmt -w .
+
+  clean:
+    desc: ビルド成果物とキャッシュを削除
+    cmds:
+      - rm -rf .schemathesis .hypothesis .openapi-preview.html schemathesis-report
+      - go clean
